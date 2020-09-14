@@ -4,7 +4,7 @@ import math
 
 def get_ffme_returns():
     """
-    Load the Fama-French Dataset for the returns of the Top and Bottom Deciles by MarketCap
+    Loads the Fama-French Dataset for the returns of the Top and Bottom Deciles by MarketCap
     """
     me_m = pd.read_csv("data/Portfolios_Formed_on_ME_monthly_EW.csv",
                        header=0, index_col=0, na_values=-99.99)
@@ -19,7 +19,7 @@ def get_hfi_returns():
     """
     Load and format the EDHEC Hedge Fund Index Returns
     """
-    hfi = pd.read_csv("data/edhec-hedgefundindices.csv",
+    hfi = pd.read_csv("data/some_csv_file.csv",
                       header=0, index_col=0, parse_dates=True)
     hfi = hfi/100
     hfi.index = hfi.index.to_period('M')
@@ -27,7 +27,7 @@ def get_hfi_returns():
 
 def get_ind_file(filetype):
     """
-    Load and format the Ken French 30 Industry Portfolios files
+    Loads and formats the Ken French 30 Industry Portfolios files
     """
     known_types = ["returns", "nfirms", "size"]
     if filetype not in known_types:
@@ -49,26 +49,26 @@ def get_ind_file(filetype):
 
 def get_ind_returns():
     """
-    Load and format the Ken French 30 Industry Portfolios Value Weighted Monthly Returns
+    Loads and formats the Ken French 30 Industry Portfolios Value Weighted Monthly Returns
     """
     return get_ind_file("returns")
 
 def get_ind_nfirms():
     """
-    Load and format the Ken French 30 Industry Portfolios Average number of Firms
+    Loads and formats the Ken French 30 Industry Portfolios Average number of Firms
     """
     return get_ind_file("nfirms")
 
 def get_ind_size():
     """
-    Load and format the Ken French 30 Industry Portfolios Average size (market cap)
+    Loads and formats the Ken French 30 Industry Portfolios Average size (market cap)
     """
     return get_ind_file("size")
 
                          
 def get_total_market_index_returns():
     """
-    Load the 30 industry portfolio data and derive the returns of a capweighted total market index
+    Loads the 30 industry portfolio data and derive the returns of a capweighted total market index
     """
     ind_nfirms = get_ind_nfirms()
     ind_size = get_ind_size()
@@ -81,9 +81,11 @@ def get_total_market_index_returns():
                          
 def skewness(r):
     """
-    Alternative to scipy.stats.skew()
     Computes the skewness of the supplied Series or DataFrame
-    Returns a float or a Series
+    
+    
+    :r: (pd.Series or pd.DataFrame) Asset returns
+    :return: (pd.Series or Float) Skewness of r
     """
     demeaned_r = r - r.mean()
     # use the population standard deviation, so set dof=0
@@ -161,7 +163,8 @@ def is_normal(r, level=0.01):
 
 
 def drawdown(return_series: pd.Series):
-    """Takes a time series of asset returns.
+    """
+    Takes a time series of asset returns.
        returns a DataFrame with columns for
        the wealth index, 
        the previous peaks, and 
@@ -615,7 +618,7 @@ def macaulay_duration(flows, discount_rate):
 
 def match_durations(cf_t, cf_s, cf_l, discount_rate):
     """
-    Returns the weight W in cf_s that, along with (1-W) in cf_l will have an effective
+    Returns the weight W in cf_1 that, along with (1-W) in cf_l will have an effective
     duration that matches cf_t
     """
     d_t = macaulay_duration(cf_t, discount_rate)
@@ -708,5 +711,55 @@ def glidepath_allocator(r1, r2, start_glide=1, end_glide=0.0):
     paths.columns = r1.columns
     return paths
 
+def floor_allocator(psp_r, ghp_r, floor, zc_prices, m=3):
+    """
+    Allocate between PSP and GHP with the goal to provide exposure to the upside
+    of the PSP without going violating the floor.
+    Uses a CPPI-style dynamic risk budgeting algorithm by investing a multiple
+    of the cushion in the PSP
+    Returns a DataFrame with the same shape as the psp/ghp representing the weights in the PSP
+    """
+    if zc_prices.shape != psp_r.shape:
+        raise ValueError("PSP and ZC Prices must have the same shape")
+    n_steps, n_scenarios = psp_r.shape
+    account_value = np.repeat(1, n_scenarios)
+    floor_value = np.repeat(1, n_scenarios)
+    w_history = pd.DataFrame(index=psp_r.index, columns=psp_r.columns)
+    for step in range(n_steps):
+        floor_value = floor*zc_prices.iloc[step] ## PV of Floor assuming today's rates and flat YC
+        cushion = (account_value - floor_value)/account_value
+        psp_w = (m*cushion).clip(0, 1) # same as applying min and max
+        ghp_w = 1-psp_w
+        psp_alloc = account_value*psp_w
+        ghp_alloc = account_value*ghp_w
+        # recompute the new account value at the end of this step
+        account_value = psp_alloc*(1+psp_r.iloc[step]) + ghp_alloc*(1+ghp_r.iloc[step])
+        w_history.iloc[step] = psp_w
+    return w_history
 
 
+def drawdown_allocator(psp_r, ghp_r, maxdd, m=3):
+    """
+    Allocate between PSP and GHP with the goal to provide exposure to the upside
+    of the PSP without going violating the floor.
+    Uses a CPPI-style dynamic risk budgeting algorithm by investing a multiple
+    of the cushion in the PSP
+    Returns a DataFrame with the same shape as the psp/ghp representing the weights in the PSP
+    """
+    n_steps, n_scenarios = psp_r.shape
+    account_value = np.repeat(1, n_scenarios)
+    floor_value = np.repeat(1, n_scenarios)
+    peak_value = np.repeat(1, n_scenarios)
+    w_history = pd.DataFrame(index=psp_r.index, columns=psp_r.columns)
+    for step in range(n_steps):
+        floor_value = (1-maxdd)*peak_value ### Floor is based on Prev Peak
+        cushion = (account_value - floor_value)/account_value
+        psp_w = (m*cushion).clip(0, 1) # same as applying min and max
+        ghp_w = 1-psp_w
+        psp_alloc = account_value*psp_w
+        ghp_alloc = account_value*ghp_w
+        # recompute the new account value and prev peak at the end of this step
+        account_value = psp_alloc*(1+psp_r.iloc[step]) + ghp_alloc*(1+ghp_r.iloc[step])
+        peak_value = np.maximum(peak_value, account_value)
+        w_history.iloc[step] = psp_w
+    return w_history
